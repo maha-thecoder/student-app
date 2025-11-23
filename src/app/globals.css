@@ -1,0 +1,399 @@
+/* -------------------------------------------- */
+/*               Tailwind Import                */
+/* -------------------------------------------- */
+@import "tailwindcss";
+
+/* -------------------------------------------- */
+/*          Global Design System (Base)         */
+/* -------------------------------------------- */
+@layer base {
+  :root {
+    --bg: #f5f7fb;                /* light background */
+    --card: #ffffff;
+    --muted: #6b7280;
+    --text: #0f172a;
+    --border: #e6e9ef;
+    --accent: #2563eb;
+    --success: #16a34a;
+    --danger: #dc2626;
+    --shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+  }
+
+  /* ---------- Modal (mobile-first improvements) ---------- */
+
+/* modal-card: default desktop look (centered width), overridden for small screens */
+.modal-card {
+  width: 100%;
+  max-width: 760px;    /* desktop panel width */
+  border-radius: 12px;
+  padding: 22px;
+  box-sizing: border-box;
+  max-height: 90vh;
+  overflow: auto;
+}
+
+/* date-row: side-by-side on desktop, stacked on mobile */
+.date-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+/* Make library card full-width on small screens and remove centered tiny box */
+@media (max-width: 768px) {
+  /* Make the page layout use top-aligned content (not perfectly centered) */
+  .page-center {
+    place-items: start;
+    padding-top: 76px; /* keep room for navbar */
+  }
+
+  /* modal becomes a full-screen sheet on phones */
+  .modal-card {
+    position: relative;
+    width: 100%;
+    height: 100vh;
+    max-width: 100%;
+    border-radius: 0;
+    padding: 20px;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    overflow-y: auto;
+  }
+
+  /* Make inputs stack and be roomy */
+  .date-row {
+    flex-direction: column;
+  }
+
+  /* Make card take full phone width (library list and other pages) */
+  .card {
+    width: 100%;
+    max-width: 100%;
+    border-radius: 0;
+    padding: 18px;
+    margin: 0;
+    box-shadow: none; /* optional: remove heavy shadow on full-screen mobile */
+    border-left: none;
+    border-right: none;
+  }
+
+  /* Make the details area (book entries) comfortable on mobile */
+  article {
+    padding: 12px;
+    border-radius: 8px;
+  }
+
+  /* Buttons full width stacked for mobile actions */
+  .btn {
+    width: 100%;
+  }
+
+  /* If you want two buttons side-by-side on larger small screens, override */
+  .card > form .btn + .btn {
+    margin-top: 8px;
+  }
+}
+
+/* Slight improvements for medium screens */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .modal-card { max-width: 640px; }
+  .date-row { gap: 10px; }
+}
+
+
+  /* Dark Mode */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b1220;
+      --card: rgba(17, 24, 39, 0.92);
+      --muted: #9aa4b2;
+      --text: #eef3fb;
+      --border: rgba(255, 255, 255, 0.14);
+      --accent: #3b82f6;
+      --shadow: 0 8px 30px rgba(2, 6, 23, 0.6);
+    }
+  }
+
+  /* Base resets */
+  *, *::before, *::after { box-sizing: border-box; }
+  body, html, #__next { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: Inter, system-ui, sans-serif;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Page layout helper */
+  .page-center {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 2rem 1rem;
+  }
+
+  /* -------------------------------------------- */
+  /*                  CARDS                       */
+  /* -------------------------------------------- */
+  .card {
+    width: 100%;
+    max-width: 900px;
+    background: var(--card);
+    border-radius: 14px;
+    padding: 24px;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+  }
+
+  /* ---------- Library page layout (full width & responsive) ---------- */
+
+.library-shell {
+  min-height: 100vh;
+  padding: 2rem 1rem;
+  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* central inner container with roomy max width but full fluid behavior */
+.library-inner {
+  width: 100%;
+  margin: 0 auto;
+  max-width: 1200px;   /* professional reading width on big screens */
+  box-sizing: border-box;
+  padding: 8px;
+}
+
+/* hero row: title + actions */
+.library-hero {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.library-title { font-size: 1.45rem; margin: 0; font-weight: 700; color: var(--text); }
+.library-sub { margin: 6px 0 0 0; color: var(--muted); }
+
+/* action container keeps Add button visible and aligned */
+.hero-actions { display: flex; gap: 10px; align-items: center; }
+
+/* library list wrapper & grid */
+.library-list-wrap { margin-top: 8px; }
+.library-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+/* book card */
+.book-card {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  box-shadow: 0 6px 18px rgba(2,6,23,0.03);
+}
+
+/* main column (title/author) */
+.book-main { flex: 1 1 55%; min-width: 0; }
+.book-title { font-weight: 700; font-size: 1.05rem; color: var(--text); margin-bottom: 6px; }
+.book-meta { font-size: 0.93rem; color: var(--muted); }
+
+/* right column: dates, stats, actions */
+.book-side {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 220px;
+}
+
+/* dates block */
+.book-dates { text-align: right; }
+.book-dates .small { font-size: 0.8rem; color: var(--muted); }
+.book-dates .strong { font-weight: 700; margin-top: 4px; }
+
+/* stats block */
+.book-stats { display: flex; flex-direction: column; align-items: center; padding: 0 8px; }
+.book-stats .days { font-weight: 800; font-size: 1.05rem; color: var(--text); }
+
+/* actions */
+.book-actions { display: flex; gap: 8px; align-items: center; }
+
+/* status button styling; visual cue for overdue */
+.status-btn {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: none;
+  font-weight: 700;
+  color: white;
+  background: var(--accent);
+}
+.status-btn[data-overdue="true"] {
+  background: linear-gradient(90deg, #ef4444, #dc2626);
+}
+
+/* small utility */
+.small { font-size: 0.82rem; color: var(--muted); }
+
+/* link CTA */
+.link-cta { color: var(--accent); font-weight: 600; text-decoration: none; }
+.link-cta:hover { text-decoration: underline; }
+
+/* ---------- Responsive behaviors ---------- */
+
+/* medium screens: two column card grid */
+@media (min-width: 900px) {
+  .library-list { grid-template-columns: 1fr; } /* still single column for readability */
+}
+
+/* small screens: stack everything vertically and make buttons full width */
+@media (max-width: 720px) {
+  .library-inner { max-width: 100%; padding: 12px; }
+  .library-hero { align-items: flex-start; gap: 10px; }
+  .hero-actions { width: 100%; display: flex; justify-content: flex-end; }
+
+  .book-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px;
+  }
+  .book-side {
+    min-width: auto;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .book-dates { text-align: left; }
+  .book-stats { flex-direction: row; gap: 8px; align-items: center; }
+  .book-actions { width: 100%; display: flex; gap: 8px; }
+  .book-actions .btn { flex: 1 1 0; }
+
+  /* make AddBook modal/button behave well on mobile */
+  .btn { font-size: 0.95rem; padding: 10px; }
+}
+
+
+  /* -------------------------------------------- */
+  /*             FORM / INPUT SYSTEM              */
+  /* -------------------------------------------- */
+
+  /* Main input styling (white border + white background) */
+  .input,
+  input[type="text"],
+  input[type="password"],
+  input[type="email"],
+  input[type="number"],
+  input[type="date"] {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.95); /* White border */
+    background: white;                          /* White background */
+    font-size: 0.98rem;
+    color: black;
+    transition: 0.15s ease;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+
+  .input::placeholder {
+    color: var(--muted);
+  }
+
+  .input:focus,
+  input:focus {
+    outline: none;
+    border-color: black;
+    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.14);
+    transform: translateY(-1px);
+  }
+
+  /* Calendar Icon (WebKit Browsers) */
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: none; /* native icon, visible on white */
+    opacity: 1;
+    cursor: pointer;
+    margin-right: 6px;
+  }
+
+  /* Firefox compatibility */
+  input[type="date"] {
+    color-scheme: light;
+    background-position: right 12px center;
+    background-repeat: no-repeat;
+  }
+
+  /* Labels */
+  label {
+    color: var(--text);
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin-bottom: 6px;
+    display: block;
+  }
+
+  /* -------------------------------------------- */
+  /*                    BUTTONS                   */
+  /* -------------------------------------------- */
+  .btn {
+    padding: 10px 14px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: 0.15s ease;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: white;
+    border: none;
+  }
+  .btn-primary:hover {
+    background: #1e4ed8;
+  }
+
+  .btn-secondary {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--border);
+  }
+
+  .btn-secondary:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /* -------------------------------------------- */
+  /*                MESSAGES                      */
+  /* -------------------------------------------- */
+  .msg {
+    margin-top: 10px;
+    font-weight: 600;
+  }
+  .msg.success { color: var(--success); }
+  .msg.error { color: var(--danger); }
+
+  /* -------------------------------------------- */
+  /*            MOBILE ADJUSTMENTS                */
+  /* -------------------------------------------- */
+  @media (max-width: 480px) {
+    .card { padding: 16px; border-radius: 12px; }
+    .input { padding: 10px 12px; }
+    .btn { padding: 9px 12px; border-radius: 8px; }
+  }
+}
