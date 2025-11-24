@@ -36,7 +36,7 @@ export default function SignupPage() {
       } else {
         setUserdata({ name: "", rollno: "", password: "" });
         // success feedback then redirect to sign in
-        router.push("/auth/login");
+        router.push("/login");
       }
     } catch (err) {
       setMessage("❌ Network error");
