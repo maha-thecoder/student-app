@@ -69,7 +69,7 @@ export default async function LibraryPage() {
             <p className="muted library-sub">Shows taken and submission dates, and days passed since taken.</p>
             {!user && (
               <p className="muted" style={{ marginTop: 6 }}>
-                You are not signed in. <Link href="/auth/login" className="link-cta">Sign in</Link> to see your borrowed books.
+                You are not signed in. <Link href="/api/auth/login" className="link-cta">Sign in</Link> to see your borrowed books.
               </p>
             )}
           </div>
