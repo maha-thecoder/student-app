@@ -326,6 +326,15 @@
     transform: translateY(-1px);
   }
 
+  .center{
+    text-align: center;
+    margin-bottom: 1rem;
+  }
+
+  .pagetransfer{
+    margin-top: 2rem;
+  }
+
   /* Calendar Icon (WebKit Browsers) */
   input[type="date"]::-webkit-calendar-picker-indicator {
     filter: none; /* native icon, visible on white */
