@@ -6,6 +6,7 @@ import Student from "@/models/student";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken"
 import { cookies } from "next/headers";
+import { sendToUser } from "@/src/messagereusable/push";
 
 
 export async function POST(req: Request) {
@@ -66,6 +67,15 @@ export async function POST(req: Request) {
 
 
         response.cookies.set("sessionToken", token, cookieOptions);
+
+        const payload = {
+      title: 'Welcome back!',
+      body: `Good to see you, ${user.name}`,
+      url: '/dashboard',
+    };
+
+        sendToUser(user._id.toString(), payload).catch((e) => console.error('login push failed', e));
+
 
         return response
 
