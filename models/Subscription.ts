@@ -8,7 +8,11 @@ export interface ISubscription {
     auth?: string;
   };
   subscription: any;
-  userId?: string;
+  userId?: string | null;
+  deviceId?: string | null;
+  ua?: string | null;
+  lastSeenAt?: Date;
+  isActive?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
   [k: string]: any;
@@ -23,10 +27,12 @@ const SubscriptionSchema = new Schema<ISubscriptionDocument>(
       p256dh: String,
       auth: String,
     },
-    // store the full subscription object so you can call web-push with it
     subscription: { type: Schema.Types.Mixed, required: true },
-        userId: { type: String, index: true }, // optional, indexed for fast lookup
-
+    userId: { type: String, index: true, default: null },
+    deviceId: { type: String, index: true, default: null },
+    ua: { type: String, default: null },
+    lastSeenAt: { type: Date, default: Date.now },
+    isActive: { type: Boolean, default: true },
   },
   { timestamps: true }
 );

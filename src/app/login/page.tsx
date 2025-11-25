@@ -3,12 +3,13 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { getDeviceId } from "@/src/messagereusable/device";
 
 type UserData = { rollno: string; password: string };
 
 export default function LoginPage() {
   const router = useRouter();
-  const [userdata, setUserdata] = useState<UserData>({ rollno: "", password: "" });
+  const [userdata, setUserdata] = useState<UserData>({ rollno: "", password: ""});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -26,7 +27,9 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(userdata),
+        body: JSON.stringify({
+          ...userdata, deviceId: getDeviceId()
+        }),
       });
 
       const json = await res.json().catch(() => ({}));

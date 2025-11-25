@@ -2,6 +2,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { getDeviceId } from '../messagereusable/device';
 
 const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY as string;
 
@@ -62,7 +63,7 @@ export default function UsePush(): null {
         await fetch('/api/subscribe', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ subscription }),
+          body: JSON.stringify({ subscription,deviceId: getDeviceId() }),
         });
 
         console.log('Push subscription created and sent to server.');
