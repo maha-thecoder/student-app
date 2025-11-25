@@ -1,10 +1,30 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 export default function Hero() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+    const router = useRouter();
+
+  
+  const handleSignOut = async () => {
+    try {
+      // Call server route to clear HttpOnly cookie
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "include",
+      });
+
+      // (optional) clear client-side data
+      localStorage.clear();
+
+      router.push("/login"); // redirect to login page
+    } catch (err) {
+      console.error("Logout failed", err);
+    }
+  };
 
   return (
     <nav className="bg-blue-500 fixed w-full z-20 top-0 start-0 border-default">
@@ -32,7 +52,7 @@ export default function Hero() {
         <div className={`${mobileOpen ? "block" : "hidden"} w-full md:block md:w-auto`} id="navbar-dropdown">
           <ul className="flex flex-col font-medium p-4 md:p-0 mt-4 border border-default rounded-base bg-neutral-secondary-soft md:space-x-8 rtl:space-x-reverse md:flex-row md:mt-0 md:border-0 md:bg-neutral-primary">
             <li>
-              <a href="#" className="block py-2 px-3 text-white bg-brand rounded md:bg-transparent md:text-fg-brand md:p-0" aria-current="page">Home</a>
+              <a href="/" className="block py-2 px-3 text-white bg-brand rounded md:bg-transparent md:text-fg-brand md:p-0" aria-current="page">Home</a>
             </li>
 
             <li className="relative">
@@ -59,7 +79,7 @@ export default function Hero() {
               </div>
             </li>
 
-            <li><a href="#" className="block py-2 px-3 text-heading rounded hover:bg-neutral-tertiary md:hover:bg-transparent md:border-0 md:hover:text-fg-brand md:p-0">Signout</a></li>
+            <li><button onClick={handleSignOut} className="block py-2 px-3 text-heading rounded hover:bg-neutral-tertiary md:hover:bg-transparent md:border-0 md:hover:text-fg-brand md:p-0">Signout</button></li>
 
           </ul>
         </div>
