@@ -50,58 +50,8 @@ export default async function Homepage() {
         </svg>
       )
     },
-    {
-      id: "book-submission",
-      title: "Book Submission",
-      description: "Submit assignments, lab reports or project documents.",
-      href: "/library",
-      icon: (
-        <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" aria-hidden>
-          <path d="M12 20h9" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round"/>
-          <path d="M4 6h16v10a2 2 0 01-2 2H6a2 2 0 01-2-2V6z" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round"/>
-          <path d="M8 6V4a4 4 0 018 0v2" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      )
-    },
-    {
-      id: "bus-attendance",
-      title: "Bus Attendance",
-      description: "Mark or review attendance on the campus bus route.",
-      href: "/attendance/bus",
-      icon: (
-        <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" aria-hidden>
-          <path d="M3 13v-5a3 3 0 013-3h12a3 3 0 013 3v5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round"/>
-          <path d="M7 17h.01M17 17h.01M7 13h10" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      )
-    },
-    {
-      id: "add-students",
-      title: "Add Students",
-      description: "Quickly add new student profiles and credentials.",
-      href: "/students/new",
-      icon: (
-        <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" aria-hidden>
-          <path d="M12 12a5 5 0 100-10 5 5 0 000 10zM6 20v-1a4 4 0 014-4h4a4 4 0 014 4v1" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round"/>
-          <path d="M19 8v6" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round"/>
-          <path d="M22 11h-6" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      )
-    },
-    // Add a couple of "non-university" features that are useful
-    {
-      id: "quick-links",
-      title: "Quick Links",
-      description: "Create custom quick links for classes, groups, or vendors.",
-      href: "/quick-links",
-      icon: (
-        <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" aria-hidden>
-          <path d="M10 14l2-2 4 4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round"/>
-          <path d="M21 12v6a2 2 0 01-2 2h-6" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round"/>
-          <path d="M3 6v6a2 2 0 002 2h6" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      )
-    }
+   
+    
   ];
 
   return (

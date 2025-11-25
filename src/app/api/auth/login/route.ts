@@ -1,12 +1,11 @@
 // src/app/api/auth/login/route.ts
-
 import { NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongodb";
 import Student from "@/models/student";
 import Subscription from "@/models/Subscription";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { sendToUser } from "@/src/messagereusable/push"; // keep existing import
+import { sendToUser } from "@/src/messagereusable/push";
 import webpush from "web-push";
 
 const JWT_SECRET = process.env.JWT_SECRET || "mahanth";
@@ -27,7 +26,25 @@ export async function POST(req: Request) {
     await connectDB();
 
     const body = await req.json();
-    const { rollno, password, deviceId } = body; // deviceId must come from client
+
+    // required login fields
+    const { rollno, password } = body ?? {};
+
+    // optional linking fields
+    let deviceId: string | null = null;
+    let clientSubscription: any | null = null;
+
+    if (typeof body?.deviceId === "string" && body.deviceId.trim() !== "") {
+      deviceId = body.deviceId.trim();
+    }
+
+    if (body?.subscription && typeof body.subscription === "object" && body.subscription.endpoint) {
+      clientSubscription = body.subscription;
+      // prefer deviceId supplied inside subscription if present
+      if (!deviceId && typeof body.subscription.deviceId === "string" && body.subscription.deviceId.trim() !== "") {
+        deviceId = body.subscription.deviceId.trim();
+      }
+    }
 
     if (!rollno || !password) {
       return NextResponse.json({ error: "Roll number and password are required" }, { status: 400 });
@@ -66,37 +83,61 @@ export async function POST(req: Request) {
     const token = jwt.sign({ sub: user._id.toString() }, JWT_SECRET, { expiresIn: "7d" });
     response.cookies.set("sessionToken", token, cookieOptions);
 
-    // 4. Link subscriptions that belong to this deviceId -> this userId
-    // Only run if deviceId was provided. If not provided, we don't link or send device-targeted notification.
-    if (deviceId) {
-      try {
-        const now = new Date();
-        // Attach subscriptions that have this deviceId to this user
-        await Subscription.updateMany(
-          { deviceId },
+    // --- Safe attach logic (Option A) ---
+    // Attach subscription only if: endpoint is unclaimed OR already owned by this user.
+    // If only deviceId provided, attach only subscriptions with that deviceId and no existing userId (or already owned by this user).
+    try {
+      const now = new Date();
+
+      if (clientSubscription && clientSubscription.endpoint) {
+        const existing = await Subscription.findOne({ endpoint: clientSubscription.endpoint }).lean();
+
+        if (!existing || !existing.userId || existing.userId.toString() === user._id.toString()) {
+          const updateObj: any = {
+            subscription: clientSubscription,
+            userId: user._id.toString(),
+            lastSeenAt: now,
+            isActive: true,
+          };
+          if (deviceId) updateObj.deviceId = deviceId;
+
+          await Subscription.findOneAndUpdate(
+            { endpoint: clientSubscription.endpoint },
+            { $set: updateObj, $setOnInsert: { createdAt: now } },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+          );
+          console.log("[login] attached subscription by endpoint for user", user._id.toString());
+        } else {
+          console.log("[login] subscription endpoint already owned by different user — skipping attach");
+        }
+      } else if (deviceId) {
+        const res = await Subscription.updateMany(
+          { deviceId, $or: [{ userId: { $exists: false } }, { userId: null }, { userId: user._id.toString() }] },
           { $set: { userId: user._id.toString(), lastSeenAt: now, isActive: true } }
         );
-      } catch (linkErr) {
-        console.error("Failed to link subscriptions for deviceId:", deviceId, linkErr);
-        // proceed — linking failure shouldn't block login
+        console.log("[login] updateMany by deviceId result", {
+          matchedCount: (res as any)?.matchedCount ?? (res as any)?.n ?? null,
+          modifiedCount: (res as any)?.modifiedCount ?? (res as any)?.nModified ?? null,
+        });
+      } else {
+        console.log("[login] no subscription or deviceId provided; skipping attach.");
       }
+    } catch (attachErr) {
+      console.error("[login] subscription attach failed", attachErr);
+      // do not block login on attach failure
     }
 
-    // 5. Prepare payload
+    // 4. Prepare payload
     const payload = {
       title: "Welcome back!",
       body: `Good to see you, ${user.name}`,
       url: "/dashboard",
     };
 
-    // 6. Send welcome notification ONLY to this device.
-    // Non-blocking: we don't await these sends so login remains fast.
+    // 5. Send welcome notification to this device only (non-blocking)
     if (deviceId) {
-      // Try using your sendToUser helper with targetDeviceId (if it supports it)
       try {
-        // call it but don't await — attach a catch to avoid unhandled rejections
-        // If sendToUser accepts a third options arg with targetDeviceId, it will be used.
-        // If not, it might ignore the arg — that's why we also include a fallback below.
+        // attempt to use sendToUser with targetDeviceId (if supported)
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-ignore
         const p = sendToUser(user._id.toString(), payload, { targetDeviceId: deviceId });
@@ -105,8 +146,7 @@ export async function POST(req: Request) {
         console.warn("sendToUser call failed or is unavailable, falling back to inline sender:", e);
       }
 
-      // Fallback inline sender using web-push: find subscriptions with { userId, deviceId } and send to them
-      // Fire-and-forget:
+      // fallback inline sender: send to subs matching userId+deviceId
       (async () => {
         try {
           const subs = await Subscription.find({ userId: user._id.toString(), deviceId }).lean();
@@ -119,10 +159,16 @@ export async function POST(req: Request) {
             subs.map(async (s: any) => {
               try {
                 await webpush.sendNotification(s.subscription, payloadStr, sendOptions);
+                console.log("[login] fallback send OK to", s.endpoint);
               } catch (err: any) {
                 console.error("push error for", s.endpoint, err);
                 if (err?.statusCode === 410 || err?.statusCode === 404) {
-                  try { await Subscription.deleteOne({ endpoint: s.endpoint }); } catch (delErr) { console.error(delErr); }
+                  try {
+                    await Subscription.deleteOne({ endpoint: s.endpoint });
+                    console.log("[login] removed expired subscription", s.endpoint);
+                  } catch (delErr) {
+                    console.error(delErr);
+                  }
                 }
               }
             })
@@ -132,8 +178,6 @@ export async function POST(req: Request) {
         }
       })();
     } else {
-      // If no deviceId provided, we intentionally DO NOT send the login welcome push to avoid broadcasting.
-      // Optionally, you can broadcast, but it's safer to skip.
       console.log("No deviceId provided in login request — skipping device-targeted notification.");
     }
 
