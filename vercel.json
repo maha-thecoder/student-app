@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/notify-due-books",
+      "schedule": "0 */6 * * *"
+    }
+  ]
+}
