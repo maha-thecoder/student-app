@@ -24,8 +24,6 @@ function daysBetween(dateFromISO: string) {
   return Math.floor(ms / (1000 * 60 * 60 * 24));
 }
 
-
-
 export default async function LibraryPage() {
   const cookieStore = await cookies();
   const token = cookieStore.get("sessionToken")?.value ?? null;
@@ -125,8 +123,7 @@ export default async function LibraryPage() {
                           className="btn status-btn"
                           data-overdue={overdue ? "true" : "false"}
                           aria-pressed={overdue}
-
-                          style={{backgroundColor:overdue?"red":"blue"}}
+                          style={{ backgroundColor: overdue ? "red" : "blue" }}
                         >
                           {overdue ? "Overdue" : "On time"}
                         </button>
