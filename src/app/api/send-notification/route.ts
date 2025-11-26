@@ -1,109 +1,225 @@
-// src/app/api/send-notification/route.ts
-import { NextResponse } from 'next/server';
-import connectDB from '@/lib/mongodb';
-import Subscription from '@/models/Subscription';
-import webpush from 'web-push';
+// src/app/api/notify-due-books/route.ts
+import { NextResponse } from "next/server";
+import connectDB from "@/lib/mongodb";
+import Book from "@/models/books";
+import NotificationLog from "@/models/NotificationLog";
+import { sendToUser } from "@/src/messagereusable/push";
 
-const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY;
-const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY;
-if (VAPID_PUBLIC && VAPID_PRIVATE) {
-  webpush.setVapidDetails('mailto:you@example.com', VAPID_PUBLIC, VAPID_PRIVATE);
-} else {
-  console.warn('VAPID keys missing in env - notifications will fail.');
+const MS_HOUR = 1000 * 60 * 60;
+const MS_DAY = 1000 * 60 * 60 * 24;
+const THROTTLE_MS = 6 * MS_HOUR; // 6 hour throttle
+
+function extractSentCount(sendResult: any): number {
+  try {
+    if (sendResult == null) return 0;
+    if (typeof sendResult === "number") return sendResult;
+    if (typeof sendResult.sent === "number") return sendResult.sent;
+    if (typeof sendResult.sentCount === "number") return sendResult.sentCount;
+
+    const arr = Array.isArray(sendResult)
+      ? sendResult
+      : Array.isArray(sendResult.matched)
+      ? sendResult.matched
+      : Array.isArray(sendResult.raw)
+      ? sendResult.raw
+      : Array.isArray(sendResult.results)
+      ? sendResult.results
+      : null;
+
+    if (Array.isArray(arr)) {
+      return arr.filter((r: any) => r && (r.status === "sent" || r.status === "ok" || r.success === true)).length;
+    }
+  } catch (e) {
+    console.warn("extractSentCount error:", e);
+  }
+  return 0;
 }
 
-export type PushPayload = {
-  title: string;
-  body: string;
-  url?: string;
-  [k: string]: any;
-};
-
-// small concurrency helper (no external deps)
-async function mapWithConcurrency<T, R>(
-  inputs: T[],
-  mapper: (item: T) => Promise<R>,
-  concurrency = 10
-) {
-  const results: R[] = [];
-  let i = 0;
-  const workers = new Array(Math.min(concurrency, inputs.length)).fill(null).map(async () => {
-    while (i < inputs.length) {
-      const idx = i++;
-      // eslint-disable-next-line no-await-in-loop
-      results[idx] = await mapper(inputs[idx]);
-    }
-  });
-  await Promise.all(workers);
-  return results;
+/** days left relative to start of today (calendar days) */
+function daysLeftFromDate(dueDate: Date | string, now = new Date()) {
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const msLeft = new Date(dueDate).getTime() - startOfToday.getTime();
+  return Math.ceil(msLeft / MS_DAY);
 }
 
 export async function POST(req: Request) {
   try {
-    const apiKey = req.headers.get('x-api-key') ?? '';
-    if (process.env.ADMIN_API_KEY && apiKey !== process.env.ADMIN_API_KEY) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    // 1) Validate CRON secret in Authorization header
+    const auth = req.headers.get("authorization") || req.headers.get("Authorization") || "";
+    const expected = process.env.CRON_SECRET;
+    if (!expected) {
+      console.error("CRON_SECRET not configured in environment");
+      return NextResponse.json({ error: "Server misconfigured" }, { status: 500 });
+    }
+    if (!auth || !auth.startsWith("Bearer ")) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const token = auth.split(" ")[1];
+    if (token !== expected) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await req.json();
-    const title = body.title ?? 'Hello';
-    const message = body.body ?? 'This is a test notification';
-    const url = body.url ?? '/';
-    const payload = JSON.stringify({ title, body: message, url });
+    // allow force mode for testing: POST /api/notify-due-books?force=1
+    const url = new URL(req.url);
+    const force = url.searchParams.get("force") === "1";
 
-    // web-push options to encourage immediate delivery
-    const sendOptions = {
-      TTL: 60, // seconds - try to deliver within 60s
-      // Request high urgency (some push services honor this header)
-      headers: {
-        Urgency: 'high',
-      },
-    };
-
+    // 2) connect DB
     await connectDB();
 
-    const subs = await Subscription.find({}).exec();
+    // 3) compute start-of-today and dueEnd (end of day two days from today)
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // local midnight
+    const dueEnd = new Date(startOfToday);
+    dueEnd.setDate(dueEnd.getDate() + 2);
+    dueEnd.setHours(23, 59, 59, 999);
 
-    const results: Array<{ endpoint?: string; status: string; reason?: any; durationMs?: number }> = [];
+    console.log(`[notify-due-books] running. startOfToday=${startOfToday.toISOString()} dueEnd=${dueEnd.toISOString()} force=${force}`);
 
-    const startAll = Date.now();
-    console.log(`[send-notification] starting sends for ${subs.length} subscriptions at`, new Date(startAll).toISOString());
+    const booksDue = await Book.find({
+      dueDate: { $gte: startOfToday, $lte: dueEnd },
+      borrowerId: { $exists: true, $ne: null },
+    }).lean();
 
-    await mapWithConcurrency(
-      subs,
-      async (doc) => {
-        const sub = (doc as any).subscription;
-        const t0 = Date.now();
-        try {
-          // send with options (TTL + Urgency)
-          await webpush.sendNotification(sub, payload, sendOptions);
-          const dur = Date.now() - t0;
-          results.push({ endpoint: doc.endpoint, status: 'sent', durationMs: dur });
-        } catch (err: any) {
-          const dur = Date.now() - t0;
-          console.error('web-push error for', doc.endpoint, err);
-          // clean up unsubscribed endpoints
-          if (err?.statusCode === 410 || err?.statusCode === 404) {
-            try {
-              await Subscription.deleteOne({ endpoint: doc.endpoint });
-            } catch (delErr) {
-              console.error('Failed to delete expired subscription', doc.endpoint, delErr);
-            }
-            results.push({ endpoint: doc.endpoint, status: 'removed', durationMs: dur });
-          } else {
-            results.push({ endpoint: doc.endpoint, status: 'error', reason: err?.body ?? err?.message, durationMs: dur });
-          }
-        }
-      },
-      10 // concurrency: change if needed; 10 is a reasonable default
+    console.log("[notify-due-books] booksDue count:", booksDue?.length ?? 0);
+    if (!booksDue || booksDue.length === 0) {
+      console.log("[notify-due-books] no books due in window");
+      return NextResponse.json({ ok: true, checked: 0, notified: 0, results: [] }, { status: 200 });
+    }
+
+    let notifiedCount = 0;
+    const results: Array<
+      | { bookId: string; status: "sent"; sentCount: number }
+      | { bookId: string; status: "skipped"; reason: string }
+      | { bookId: string; status: "error"; reason: string }
+    > = [];
+
+    console.log(
+      `[notify-due-books] found ${booksDue.length} books due (from ${startOfToday.toISOString()} to ${dueEnd.toISOString()})`
     );
 
-    const totalMs = Date.now() - startAll;
-    console.log(`[send-notification] finished sends in ${totalMs}ms; summary:`, results.filter(r => r.status === 'sent').length, 'sent');
+    for (const book of booksDue) {
+      try {
+        const userId = book.borrowerId?.toString?.() ?? null;
+        if (!userId) {
+          console.log("[notify-due-books] skipping book with no borrowerId:", book._id?.toString?.());
+          results.push({ bookId: book._id.toString(), status: "skipped", reason: "missing borrowerId" });
+          continue;
+        }
 
-    return NextResponse.json({ sent: results.filter(r => r.status === 'sent').length, results }, { status: 200 });
+        // days left relative to start of today (calendar days)
+        const daysLeft = daysLeftFromDate(book.dueDate, now);
+
+        console.log(
+          `[notify-due-books] processing book=${book._id?.toString?.()} title="${book.title}" dueDate=${new Date(
+            book.dueDate
+          ).toISOString()} daysLeft=${daysLeft}`
+        );
+
+        // throttle: check last notification timestamp
+        const log = await NotificationLog.findOne({ userId, bookId: book._id.toString() }).lean();
+        const lastNotifiedAt = log?.lastNotifiedAt ? new Date(log.lastNotifiedAt) : null;
+        const sinceLast = lastNotifiedAt ? now.getTime() - lastNotifiedAt.getTime() : Infinity;
+        const shouldNotify = force || !lastNotifiedAt || sinceLast >= THROTTLE_MS;
+
+        if (!shouldNotify) {
+          const reason = lastNotifiedAt
+            ? `throttled (lastNotifiedAt=${lastNotifiedAt.toISOString()})`
+            : "throttled";
+          console.log(
+            "[notify-due-books] skipping due to throttle for user:",
+            userId,
+            "book:",
+            book._id.toString(),
+            "lastNotifiedAt:",
+            lastNotifiedAt?.toISOString?.() ?? null
+          );
+          results.push({ bookId: book._id.toString(), status: "skipped", reason });
+          continue;
+        }
+
+        const title = "Library reminder";
+        const body =
+          daysLeft <= 0
+            ? `Your book "${book.title}" is due today. Please return it.`
+            : daysLeft === 1
+            ? `You have 1 day left to submit "${book.title}".`
+            : `You have ${daysLeft} days left to submit "${book.title}".`;
+
+        const payload = {
+          title,
+          body,
+          url: `/library/${book._id.toString()}`,
+          meta: { bookId: book._id.toString(), daysLeft },
+          tag: `due-book-${userId}-${book._id.toString()}`, // helpful for SW dedupe
+        };
+
+        // call sendToUser and inspect its result
+        try {
+          console.log("[notify-due-books] about to call sendToUser for user=", userId, "book=", book._id.toString());
+          const sendResult = await sendToUser(userId, payload);
+          const sentCount = extractSentCount(sendResult);
+
+          console.log(
+            "[notify-due-books] sendToUser raw result for user",
+            userId,
+            "book",
+            book._id.toString(),
+            "=>",
+            JSON.stringify(sendResult)
+          );
+          console.log("[notify-due-books] interpreted sentCount =>", sentCount);
+
+          if (sentCount > 0) {
+            try {
+              await NotificationLog.updateOne(
+                { userId, bookId: book._id.toString() },
+                { $set: { lastNotifiedAt: now } },
+                { upsert: true }
+              );
+            } catch (logErr) {
+              console.error(
+                "[notify-due-books] failed to update NotificationLog for",
+                userId,
+                "book",
+                book._id.toString(),
+                logErr
+              );
+            }
+
+            results.push({ bookId: book._id.toString(), status: "sent", sentCount });
+            notifiedCount += sentCount;
+          } else {
+            console.log(
+              "[notify-due-books] no devices were sent for user (sentCount=0) — skipping NotificationLog update",
+              userId,
+              book._id.toString()
+            );
+            results.push({ bookId: book._id.toString(), status: "skipped", reason: "no devices found (sentCount=0)" });
+          }
+        } catch (sendErr: any) {
+          console.error(
+            "[notify-due-books] sendToUser threw for user",
+            userId,
+            "book",
+            book._id?.toString?.(),
+            sendErr
+          );
+          results.push({ bookId: book._id.toString(), status: "error", reason: String(sendErr?.message ?? sendErr) });
+        }
+      } catch (innerErr) {
+        console.error("[notify-due-books] error processing book", book._id?.toString?.(), innerErr);
+        results.push({ bookId: book._id?.toString?.() ?? "unknown", status: "error", reason: String(innerErr) });
+      }
+    }
+
+    console.log(`[notify-due-books] finished: checked=${booksDue.length} notified=${notifiedCount}`);
+
+    return NextResponse.json(
+      { ok: true, checked: booksDue.length, notified: notifiedCount, results },
+      { status: 200 }
+    );
   } catch (err) {
-    console.error('Send notification error:', err);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    console.error("notify-due-books error:", err);
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }

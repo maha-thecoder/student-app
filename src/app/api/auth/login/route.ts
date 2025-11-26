@@ -1,16 +1,15 @@
-// src/app/api/auth/login/route.ts
 import { NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongodb";
 import Student from "@/models/student";
 import Subscription from "@/models/Subscription";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { sendToUser } from "@/src/messagereusable/push";
+// import { sendToUser } from "@/src/messagereusable/push"; // removed to avoid double-sends
 import webpush from "web-push";
 
 const JWT_SECRET = process.env.JWT_SECRET || "mahanth";
 
-// setup VAPID (used by fallback inline sender)
+// setup VAPID (used by inline sender)
 const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY;
 const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY;
 if (VAPID_PUBLIC && VAPID_PRIVATE) {
@@ -40,7 +39,6 @@ export async function POST(req: Request) {
 
     if (body?.subscription && typeof body.subscription === "object" && body.subscription.endpoint) {
       clientSubscription = body.subscription;
-      // prefer deviceId supplied inside subscription if present
       if (!deviceId && typeof body.subscription.deviceId === "string" && body.subscription.deviceId.trim() !== "") {
         deviceId = body.subscription.deviceId.trim();
       }
@@ -84,8 +82,6 @@ export async function POST(req: Request) {
     response.cookies.set("sessionToken", token, cookieOptions);
 
     // --- Safe attach logic (Option A) ---
-    // Attach subscription only if: endpoint is unclaimed OR already owned by this user.
-    // If only deviceId provided, attach only subscriptions with that deviceId and no existing userId (or already owned by this user).
     try {
       const now = new Date();
 
@@ -134,38 +130,45 @@ export async function POST(req: Request) {
       url: "/dashboard",
     };
 
-    // 5. Send welcome notification to this device only (non-blocking)
+    // 5. Send welcome notification — inline sender ONLY with dedupe
     if (deviceId) {
-      try {
-        // attempt to use sendToUser with targetDeviceId (if supported)
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
-        const p = sendToUser(user._id.toString(), payload, { targetDeviceId: deviceId });
-        if (p && typeof p.catch === "function") p.catch((e: any) => console.error("sendToUser (target) failed:", e));
-      } catch (e) {
-        console.warn("sendToUser call failed or is unavailable, falling back to inline sender:", e);
-      }
-
-      // fallback inline sender: send to subs matching userId+deviceId
       (async () => {
         try {
+          // fetch subscriptions for this user and deviceId
           const subs = await Subscription.find({ userId: user._id.toString(), deviceId }).lean();
-          if (!subs || subs.length === 0) return;
+          if (!subs || subs.length === 0) {
+            console.log("[login] no matching subscriptions found for deviceId; skipping send");
+            return;
+          }
+
+          // dedupe endpoints — sometimes duplicates exist in DB
+          const seen = new Set<string>();
+          const uniqueSubs = subs.filter((s: any) => {
+            const ep = s.endpoint || s.subscription?.endpoint;
+            if (!ep) return false;
+            if (seen.has(ep)) return false;
+            seen.add(ep);
+            return true;
+          });
+
+          if (uniqueSubs.length === 0) return;
 
           const payloadStr = JSON.stringify(payload);
           const sendOptions = { TTL: 60, headers: { Urgency: "high" } };
 
           await Promise.all(
-            subs.map(async (s: any) => {
+            uniqueSubs.map(async (s: any) => {
+              const subObj = s.subscription || s;
               try {
-                await webpush.sendNotification(s.subscription, payloadStr, sendOptions);
-                console.log("[login] fallback send OK to", s.endpoint);
+                await webpush.sendNotification(subObj, payloadStr, sendOptions);
+                console.log("[login] inline send OK to", subObj?.endpoint || s.endpoint);
               } catch (err: any) {
-                console.error("push error for", s.endpoint, err);
+                console.error("push error for", subObj?.endpoint || s.endpoint, err);
+                // cleanup expired subscriptions
                 if (err?.statusCode === 410 || err?.statusCode === 404) {
                   try {
-                    await Subscription.deleteOne({ endpoint: s.endpoint });
-                    console.log("[login] removed expired subscription", s.endpoint);
+                    await Subscription.deleteOne({ endpoint: subObj?.endpoint || s.endpoint });
+                    console.log("[login] removed expired subscription", subObj?.endpoint || s.endpoint);
                   } catch (delErr) {
                     console.error(delErr);
                   }
