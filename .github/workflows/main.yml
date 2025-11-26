@@ -11,6 +11,6 @@ jobs:
     steps:
       - name: Trigger notification job
         run: |
-          curl -X POST "https://your-domain.vercel.app/api/notify-due-books" \
+          curl -X POST "https://student-app-nine-gamma.vercel.app/api/notify-due-books" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             -d '{}'
