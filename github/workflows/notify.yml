@@ -1,8 +1,8 @@
-name: Notify due books (every 6hrs)
+name: Notify due books (every 5 mins)
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "*/5 * * * *"   # every 5 minutes for testing
   workflow_dispatch:
 
 jobs:
@@ -11,6 +11,6 @@ jobs:
     steps:
       - name: Trigger notification job
         run: |
-          curl -X POST "https://your-domain.vercel.app/api/notify-due-books" \
+          curl -X POST "https://student-app-nine-gamma.vercel.app/api/notify-due-books" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             -d '{}'

@@ -142,7 +142,7 @@ export async function POST(req: Request) {
           daysLeft <= 0
             ? `Your book "${book.title}" is due today. Please return it.`
             : daysLeft === 1
-            ? `You have 1 day left to submit "${book.title}".`
+            ? `You have 1 day left to submit "${book.title} ${daysLeft}".`
             : `You have ${daysLeft} days left to submit "${book.title}".`;
 
         const payload = {
