@@ -7,7 +7,7 @@ import { sendToUser } from "@/src/messagereusable/push";
 
 const MS_HOUR = 1000 * 60 * 60;
 const MS_DAY = 1000 * 60 * 60 * 24;
-const THROTTLE_MS = 6 * MS_HOUR; // 6 hour throttle
+const THROTTLE_MS = 1 * MS_HOUR; // 6 hour throttle
 
 function extractSentCount(sendResult: any): number {
   try {
