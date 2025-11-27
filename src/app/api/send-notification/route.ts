@@ -1,227 +1,150 @@
-// src/app/api/notify-due-books/route.ts
+// src/app/api/send-notification/route.ts
 import { NextResponse } from "next/server";
 import connectDB from "@/lib/mongodb";
-import Book from "@/models/books";
-import NotificationLog from "@/models/NotificationLog";
+import Subscription from "@/models/Subscription";
+import { cookies } from "next/headers";
+import jwt from "jsonwebtoken";
 import { sendToUser } from "@/src/messagereusable/push";
 
-const MS_HOUR = 1000 * 60 * 60;
-const MS_DAY = 1000 * 60 * 60 * 24;
- // 6 hour throttle
-const MS_MIN = 1000 * 60;
-const THROTTLE_MS = 1 * MS_MIN;
-
-function extractSentCount(sendResult: any): number {
+/**
+ * Safely extract a numeric "sent" count from many possible shapes
+ * of sendResult returned by various push libs.
+ */
+function extractSentCount(sendResult: unknown): number {
   try {
-    if (sendResult == null) return 0;
-    if (typeof sendResult === "number") return sendResult;
-    if (typeof sendResult.sent === "number") return sendResult.sent;
-    if (typeof sendResult.sentCount === "number") return sendResult.sentCount;
+    const r = sendResult as any;
+    if (r == null) return 0;
 
-    const arr = Array.isArray(sendResult)
-      ? sendResult
-      : Array.isArray(sendResult.matched)
-      ? sendResult.matched
-      : Array.isArray(sendResult.raw)
-      ? sendResult.raw
-      : Array.isArray(sendResult.results)
-      ? sendResult.results
-      : null;
+    // common numeric shortcuts
+    if (typeof r === "number") return r;
+    if (typeof r.sent === "number") return r.sent;
+    if (typeof r.sentCount === "number") return r.sentCount;
+    if (typeof r.successCount === "number") return r.successCount;
+    if (typeof r.success === "number") return r.success;
+
+    // boolean "success" + optional count
+    if (typeof r.success === "boolean" && r.success === true) {
+      if (typeof r.count === "number") return r.count;
+      return 1;
+    }
+
+    // common array shapes (results/responses/raw/matched)
+    const arr =
+      Array.isArray(r) ? r
+        : Array.isArray(r?.results) ? r.results
+        : Array.isArray(r?.responses) ? r.responses
+        : Array.isArray(r?.raw) ? r.raw
+        : Array.isArray(r?.matched) ? r.matched
+        : null;
 
     if (Array.isArray(arr)) {
-      return arr.filter((r: any) => r && (r.status === "sent" || r.status === "ok" || r.success === true)).length;
+      // count items that appear successful
+      return arr.filter((item: any) => {
+        if (!item) return false;
+        if (item.status && (item.status === "sent" || item.status === "ok")) return true;
+        if (typeof item.success === "boolean") return item.success === true;
+        // some libs provide error field on failure
+        if ("error" in item && item.error != null) return false;
+        // fallback: presence of endpoint or id may indicate an attempt; treat as success is risky,
+        // so only count when we see no error property.
+        return !("error" in item);
+      }).length;
+    }
+
+    // fallback: look for numeric-looking keys
+    for (const k of Object.keys(r || {})) {
+      if (/sent|success|count|ok/i.test(k) && typeof r[k] === "number") {
+        return r[k];
+      }
     }
   } catch (e) {
-    console.warn("extractSentCount error:", e);
+    console.warn("extractSentCount() error:", e);
   }
   return 0;
 }
 
-/** days left relative to start of today (calendar days) */
-function daysLeftFromDate(dueDate: Date | string, now = new Date()) {
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const msLeft = new Date(dueDate).getTime() - startOfToday.getTime();
-  return Math.ceil(msLeft / MS_DAY);
-}
-
 export async function POST(req: Request) {
   try {
-    // 1) Validate CRON secret in Authorization header
-    const auth = req.headers.get("authorization") || req.headers.get("Authorization") || "";
-    const expected = process.env.CRON_SECRET;
-    if (!expected) {
-      console.error("CRON_SECRET not configured in environment");
-      return NextResponse.json({ error: "Server misconfigured" }, { status: 500 });
-    }
-    if (!auth || !auth.startsWith("Bearer ")) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    const token = auth.split(" ")[1];
-    if (token !== expected) {
+    // 1) Check user session via cookies
+    const cookieStore = await cookies();
+    const token = cookieStore.get("sessionToken")?.value;
+
+    if (!token) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // allow force mode for testing: POST /api/notify-due-books?force=1
-    const url = new URL(req.url);
-    const force = url.searchParams.get("force") === "1";
+    let decoded: any = null;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET!);
+    } catch (err) {
+      console.error("JWT verify failed:", err);
+      return NextResponse.json({ error: "Invalid token" }, { status: 401 });
+    }
 
-    // 2) connect DB
+    const userId = decoded.id;
+    if (!userId) {
+      return NextResponse.json({ error: "Invalid userId" }, { status: 401 });
+    }
+
+    // 2) Read request body
+    const body = await req.json();
+    const { title, message, url } = body;
+
+    if (!title || !message) {
+      return NextResponse.json(
+        { error: "title and message are required" },
+        { status: 400 }
+      );
+    }
+
+    // 3) Connect database
     await connectDB();
 
-    // 3) compute start-of-today and dueEnd (end of day two days from today)
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // local midnight
-    const dueEnd = new Date(startOfToday);
-    dueEnd.setDate(dueEnd.getDate() + 2);
-    dueEnd.setHours(23, 59, 59, 999);
+    // 4) Check if user has any push subscriptions
+    const subs = await Subscription.find({ userId }).lean();
 
-    console.log(`[notify-due-books] running. startOfToday=${startOfToday.toISOString()} dueEnd=${dueEnd.toISOString()} force=${force}`);
-
-    const booksDue = await Book.find({
-      dueDate: { $gte: startOfToday, $lte: dueEnd },
-      borrowerId: { $exists: true, $ne: null },
-    }).lean();
-
-    console.log("[notify-due-books] booksDue count:", booksDue?.length ?? 0);
-    if (!booksDue || booksDue.length === 0) {
-      console.log("[notify-due-books] no books due in window");
-      return NextResponse.json({ ok: true, checked: 0, notified: 0, results: [] }, { status: 200 });
+    if (!subs || subs.length === 0) {
+      console.log("[send-notification] No subscriptions for user:", userId);
+      return NextResponse.json({
+        ok: false,
+        sent: 0,
+        message: "No devices subscribed",
+      });
     }
 
-    let notifiedCount = 0;
-    const results: Array<
-      | { bookId: string; status: "sent"; sentCount: number }
-      | { bookId: string; status: "skipped"; reason: string }
-      | { bookId: string; status: "error"; reason: string }
-    > = [];
+    // 5) Build payload
+    const payload = {
+      title,
+      body: message,
+      url: url ?? "/", // default redirect
+      icon: "/icons/icon-512x512.png",
+      meta: {
+        type: "manual-message",
+        userId,
+      },
+    };
 
-    console.log(
-      `[notify-due-books] found ${booksDue.length} books due (from ${startOfToday.toISOString()} to ${dueEnd.toISOString()})`
-    );
+    // 6) Use your existing sendToUser utility
+    console.log("[send-notification] Sending to user:", userId);
+    const sendResult = await sendToUser(userId, payload);
 
-    for (const book of booksDue) {
-      try {
-        const userId = book.borrowerId?.toString?.() ?? null;
-        if (!userId) {
-          console.log("[notify-due-books] skipping book with no borrowerId:", book._id?.toString?.());
-          results.push({ bookId: book._id.toString(), status: "skipped", reason: "missing borrowerId" });
-          continue;
-        }
+    // 7) Extract sent count safely
+    const sentCount = extractSentCount(sendResult);
 
-        // days left relative to start of today (calendar days)
-        const daysLeft = daysLeftFromDate(book.dueDate, now);
+    console.log("[send-notification] sendResult:", (() => {
+      try { return JSON.stringify(sendResult); } catch { return String(sendResult); }
+    })());
 
-        console.log(
-          `[notify-due-books] processing book=${book._id?.toString?.()} title="${book.title}" dueDate=${new Date(
-            book.dueDate
-          ).toISOString()} daysLeft=${daysLeft}`
-        );
-
-        // throttle: check last notification timestamp
-        const log = await NotificationLog.findOne({ userId, bookId: book._id.toString() }).lean();
-        const lastNotifiedAt = log?.lastNotifiedAt ? new Date(log.lastNotifiedAt) : null;
-        const sinceLast = lastNotifiedAt ? now.getTime() - lastNotifiedAt.getTime() : Infinity;
-        const shouldNotify = force || !lastNotifiedAt || sinceLast >= THROTTLE_MS;
-
-        if (!shouldNotify) {
-          const reason = lastNotifiedAt
-            ? `throttled (lastNotifiedAt=${lastNotifiedAt.toISOString()})`
-            : "throttled";
-          console.log(
-            "[notify-due-books] skipping due to throttle for user:",
-            userId,
-            "book:",
-            book._id.toString(),
-            "lastNotifiedAt:",
-            lastNotifiedAt?.toISOString?.() ?? null
-          );
-          results.push({ bookId: book._id.toString(), status: "skipped", reason });
-          continue;
-        }
-
-        const title = "Library reminder";
-        const body =
-          daysLeft <= 0
-            ? `Your book "${book.title}" is due today. Please return it.`
-            : daysLeft === 1
-            ? `You have 1 day left to submit "${book.title} ${daysLeft}".`
-            : `You have ${daysLeft} days left to submit "${book.title}".`;
-
-        const payload = {
-          title,
-          body,
-          url: `/library/${book._id.toString()}`,
-          meta: { bookId: book._id.toString(), daysLeft },
-          tag: `due-book-${userId}-${book._id.toString()}`, // helpful for SW dedupe
-        };
-
-        // call sendToUser and inspect its result
-        try {
-          console.log("[notify-due-books] about to call sendToUser for user=", userId, "book=", book._id.toString());
-          const sendResult = await sendToUser(userId, payload);
-          const sentCount = extractSentCount(sendResult);
-
-          console.log(
-            "[notify-due-books] sendToUser raw result for user",
-            userId,
-            "book",
-            book._id.toString(),
-            "=>",
-            JSON.stringify(sendResult)
-          );
-          console.log("[notify-due-books] interpreted sentCount =>", sentCount);
-
-          if (sentCount > 0) {
-            try {
-              await NotificationLog.updateOne(
-                { userId, bookId: book._id.toString() },
-                { $set: { lastNotifiedAt: now } },
-                { upsert: true }
-              );
-            } catch (logErr) {
-              console.error(
-                "[notify-due-books] failed to update NotificationLog for",
-                userId,
-                "book",
-                book._id.toString(),
-                logErr
-              );
-            }
-
-            results.push({ bookId: book._id.toString(), status: "sent", sentCount });
-            notifiedCount += sentCount;
-          } else {
-            console.log(
-              "[notify-due-books] no devices were sent for user (sentCount=0) — skipping NotificationLog update",
-              userId,
-              book._id.toString()
-            );
-            results.push({ bookId: book._id.toString(), status: "skipped", reason: "no devices found (sentCount=0)" });
-          }
-        } catch (sendErr: any) {
-          console.error(
-            "[notify-due-books] sendToUser threw for user",
-            userId,
-            "book",
-            book._id?.toString?.(),
-            sendErr
-          );
-          results.push({ bookId: book._id.toString(), status: "error", reason: String(sendErr?.message ?? sendErr) });
-        }
-      } catch (innerErr) {
-        console.error("[notify-due-books] error processing book", book._id?.toString?.(), innerErr);
-        results.push({ bookId: book._id?.toString?.() ?? "unknown", status: "error", reason: String(innerErr) });
-      }
-    }
-
-    console.log(`[notify-due-books] finished: checked=${booksDue.length} notified=${notifiedCount}`);
-
+    return NextResponse.json({
+      ok: true,
+      sent: sentCount,
+      result: sendResult,
+    });
+  } catch (err: any) {
+    console.error("send-notification error:", err);
     return NextResponse.json(
-      { ok: true, checked: booksDue.length, notified: notifiedCount, results },
-      { status: 200 }
+      { error: err?.message ?? "Internal Server Error" },
+      { status: 500 }
     );
-  } catch (err) {
-    console.error("notify-due-books error:", err);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }
