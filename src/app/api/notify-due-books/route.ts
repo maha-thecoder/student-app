@@ -143,7 +143,7 @@ export async function POST(req: Request) {
           ? now.getTime() - lastNotifiedAt.getTime()
           : Infinity;
 
-        const shouldNotify = force || !lastNotifiedAt || sinceLast >= 1 * MS_MIN;
+        const shouldNotify = force || !lastNotifiedAt || sinceLast >= 4 * MS_MIN;
 
         if (!shouldNotify) {
           console.log(
