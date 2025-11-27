@@ -130,59 +130,85 @@ export async function POST(req: Request) {
       url: "/dashboard",
     };
 
-    // 5. Send welcome notification — inline sender ONLY with dedupe
-    if (deviceId) {
-      (async () => {
-        try {
-          // fetch subscriptions for this user and deviceId
-          const subs = await Subscription.find({ userId: user._id.toString(), deviceId }).lean();
-          if (!subs || subs.length === 0) {
-            console.log("[login] no matching subscriptions found for deviceId; skipping send");
-            return;
+    // 5. Send welcome notification — inline sender with robust fallback/dedupe
+    (async () => {
+      try {
+        const now = new Date();
+        let subs: any[] = [];
+
+        // If client provided subscription in request, use it directly (fast, reliable)
+        if (clientSubscription && clientSubscription.endpoint) {
+          subs = [{ subscription: clientSubscription, endpoint: clientSubscription.endpoint }];
+          console.log("[login] using client-provided subscription for inline send");
+        } else {
+          // if deviceId provided, prefer device-scoped subscriptions
+          if (deviceId) {
+            subs = await Subscription.find({ userId: user._id.toString(), deviceId }).lean();
+            if (!subs || subs.length === 0) {
+              console.log("[login] no matching subscriptions found for deviceId; falling back to all user subscriptions");
+            } else {
+              console.log("[login] found", subs.length, "subscriptions by deviceId for inline send");
+            }
           }
 
-          // dedupe endpoints — sometimes duplicates exist in DB
-          const seen = new Set<string>();
-          const uniqueSubs = subs.filter((s: any) => {
-            const ep = s.endpoint || s.subscription?.endpoint;
-            if (!ep) return false;
-            if (seen.has(ep)) return false;
-            seen.add(ep);
-            return true;
-          });
+          // fallback: all subscriptions for user
+          if (!subs || subs.length === 0) {
+            subs = await Subscription.find({ userId: user._id.toString() }).lean();
+            console.log("[login] found", subs?.length ?? 0, "total subscriptions for user (fallback)");
+          }
+        }
 
-          if (uniqueSubs.length === 0) return;
+        // dedupe endpoints — sometimes duplicates exist in DB
+        const seen = new Set<string>();
+        const uniqueSubs = (subs || []).filter((s: any) => {
+          const ep = s.endpoint || s.subscription?.endpoint;
+          if (!ep) return false;
+          if (seen.has(ep)) return false;
+          seen.add(ep);
+          return true;
+        });
 
-          const payloadStr = JSON.stringify(payload);
-          const sendOptions = { TTL: 60, headers: { Urgency: "high" } };
+        if (!uniqueSubs || uniqueSubs.length === 0) {
+          console.log("[login] no subscriptions available to send welcome notification");
+          return;
+        }
 
-          await Promise.all(
-            uniqueSubs.map(async (s: any) => {
-              const subObj = s.subscription || s;
+        const payloadStr = JSON.stringify(payload);
+        const sendOptions = { TTL: 60, headers: { Urgency: "high" } };
+
+        await Promise.all(
+          uniqueSubs.map(async (s: any) => {
+            const subObj = s.subscription || s; // support both shapes
+            try {
+              await webpush.sendNotification(subObj, payloadStr, sendOptions);
+              console.log("[login] inline send OK to", subObj?.endpoint || s.endpoint);
+              // update lastSeenAt to reflect recent activity
               try {
-                await webpush.sendNotification(subObj, payloadStr, sendOptions);
-                console.log("[login] inline send OK to", subObj?.endpoint || s.endpoint);
-              } catch (err: any) {
-                console.error("push error for", subObj?.endpoint || s.endpoint, err);
-                // cleanup expired subscriptions
-                if (err?.statusCode === 410 || err?.statusCode === 404) {
-                  try {
-                    await Subscription.deleteOne({ endpoint: subObj?.endpoint || s.endpoint });
-                    console.log("[login] removed expired subscription", subObj?.endpoint || s.endpoint);
-                  } catch (delErr) {
-                    console.error(delErr);
-                  }
+                await Subscription.updateOne(
+                  { endpoint: subObj?.endpoint || s.endpoint },
+                  { $set: { lastSeenAt: now, isActive: true, userId: user._id.toString() } }
+                );
+              } catch (uErr) {
+                console.warn("[login] failed to update lastSeenAt for subscription", uErr);
+              }
+            } catch (err: any) {
+              console.error("push error for", subObj?.endpoint || s.endpoint, err);
+              // cleanup expired subscriptions
+              if (err?.statusCode === 410 || err?.statusCode === 404) {
+                try {
+                  await Subscription.deleteOne({ endpoint: subObj?.endpoint || s.endpoint });
+                  console.log("[login] removed expired subscription", subObj?.endpoint || s.endpoint);
+                } catch (delErr) {
+                  console.error(delErr);
                 }
               }
-            })
-          );
-        } catch (err) {
-          console.error("inline send fallback error:", err);
-        }
-      })();
-    } else {
-      console.log("No deviceId provided in login request — skipping device-targeted notification.");
-    }
+            }
+          })
+        );
+      } catch (err) {
+        console.error("inline send fallback error:", err);
+      }
+    })();
 
     return response;
   } catch (err) {
