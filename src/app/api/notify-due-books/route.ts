@@ -8,6 +8,7 @@ import Subscription from "@/models/Subscription"; // <-- if you have this
 import { sendToUser } from "@/src/messagereusable/push";
 
 const MS_HOUR = 1000 * 60 * 60;
+const MS_MIN = 1000 * 60;
 
 // -----------------------------
 //     FIXED SENT COUNT
@@ -142,7 +143,7 @@ export async function POST(req: Request) {
           ? now.getTime() - lastNotifiedAt.getTime()
           : Infinity;
 
-        const shouldNotify = force || !lastNotifiedAt || sinceLast >= 6 * MS_HOUR;
+        const shouldNotify = force || !lastNotifiedAt || sinceLast >= 1 * MS_MIN;
 
         if (!shouldNotify) {
           console.log(
