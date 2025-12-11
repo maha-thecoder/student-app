@@ -2,18 +2,15 @@ import { NextResponse } from "next/server";
 import connectDB from "@/lib/mongodb";
 import Book from "@/models/books";
 
-// Define the type for params
-interface Params {
-  params: {
-    id: string;
-  };
-}
-
-export async function DELETE(_req: Request, { params }: Params) {
+export async function DELETE(
+  _req: Request,
+  context: { params: { id: string } | Promise<{ id: string }> }
+) {
   try {
     await connectDB();
 
-    const { id } = params;
+    // support both plain object and Promise<{ id }>
+    const { id } = await context.params;
 
     const deleted = await Book.findByIdAndDelete(id);
 
