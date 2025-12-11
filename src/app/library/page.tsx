@@ -7,7 +7,6 @@ import Book from "@/models/books";
 import AddBookForm from "@/src/components/bookform";
 import jwt from "jsonwebtoken";
 import Student from "@/models/student";
-import DeleteButton from "./DeleteButton";
 
 type BookView = {
   id: string;
@@ -119,7 +118,6 @@ export default async function LibraryPage() {
                       </div>
 
                       <div className="book-actions">
-            <DeleteButton bookId={b.id} />
 
                         <button
                           className="btn status-btn"
